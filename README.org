@@ -1,0 +1,59 @@
+~FRZDatabaseViewMapper~ is a class that manages multiple [[https://github.com/yapstudios/YapDatabase/wiki/Views#mappings][YapDatabaseViewMappings.]]
+
+** Features
+- Handles all boilerplate for updating the user interface with animations
+- Is agnostic to what kind of view it is updating - works with ~UITableView~ and ~UICollectionView~ out of the box, but can manage any view conforming to ~FRZDatabaseViewMappable~.
+- Supports multiple view mappings in the same view, meaning you can show the same database object in multiple table view sections
+- Supports animated toggling between different view mappings (for example when activating a search)
+- Handles edge cases/hard to find bugs in ~UICollectionView~
+
+The ~FRZDatabaseViewMapper~ was born when we had to support showing the same match in multiple sections of a single ~UICollectionView~
+in [[https://www.forzafootball.com/apps/][Forza Football.]] We quickly realized that since it handled the boilerplate of updating the UI, it was useful in every place where
+we had a [[https://github.com/yapstudios/YapDatabase][YapDatabase]]-powered view. It is now used in several of our apps, and makes creating those views much easier!
+
+** Usage example
+#+BEGIN_SRC objc
+@interface MyTableViewController : UITableViewController
+
+@property (nonatomic, strong) FRZDatabaseViewMapper *viewMapper;
+
+@end
+
+@implementation MyTableviewcontroller
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    // Must be a long-lived read transaction. We prefer to use a shared UI-connection as discussed in: https://github.com/yapstudios/YapDatabase/wiki/Performance-Primer
+    YapDatabaseConnection *connection = ...;
+
+    // The NSNotification that is posted when connection is updated.
+    NSString *updateNotificationName = ...;
+
+    self.viewMapper = [[FRZDatabaseViewMapper alloc] initWithConnection:connection updateNotificationName:updateNotificationName];
+
+    // Since self.view is a UITableView, viewMapper can update it automatically. It does support any object that conforms to FRZDatabaseViewMappable.
+    self.viewMapper.view = self.view;
+
+    // Now, initialize your view mappings normally. If needed, create multiple view mappings and they will be shown in the table view in the same order as in viewMapper.activeViewMappings!
+    YapDatabaseViewMappings *mappings = [YapDatabaseViewMappings mappingsWithGroups:@[@"group_1", @"group2"]  view:"my_database_view"];
+    self.viewMapper.activeViewMappings = @[mappings];
+
+    // All done! self.view will now be automatically updated when the underlying my_database_view changes.
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return [self.viewMapper numberOfSections];
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    return [self.viewMapper numberOfItemsInSection];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    MyObject *object = [self.viewMapper objectAtIndexPath:indexPath];
+    // Dequeue/configure cell normally
+}
+
+@end
+#+END_SRC
