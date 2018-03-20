@@ -39,7 +39,7 @@
  @discussion FRZDatabaseViewMapper will listen to NSNotifications with name `updateNotificationName`, where object == `connection`.
  The user info of this notification must contain the key "notifications" which is the array returned when running beginLongLivedReadTransaction on `connection`.
  */
-- (instancetype)initWithConnection:(YapDatabaseConnection *)connection updateNotificationName:(NSString *)updateNotificationName NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithConnection:(YapDatabaseConnection *)connection updateNotificationName:(NSNotificationName)updateNotificationName NS_DESIGNATED_INITIALIZER;
 
 @property (nonatomic, weak) id<FRZDatabaseViewMapperDelegate> delegate;
 @property (nonatomic, assign) BOOL shouldAnimateUpdates; // If NO, calls reloadData instead of animating updates. Defaults to YES

@@ -30,7 +30,7 @@
 
 @implementation FRZDatabaseViewMapper
 
-- (instancetype)initWithConnection:(YapDatabaseConnection *)connection updateNotificationName:(NSString *)updateNotificationName
+- (instancetype)initWithConnection:(YapDatabaseConnection *)connection updateNotificationName:(NSNotificationName)updateNotificationName
 {
     if (self = [super init]) {
         if (!connection.isInLongLivedReadTransaction) {
