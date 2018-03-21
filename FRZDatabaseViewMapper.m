@@ -120,15 +120,9 @@
     NSUInteger numberOfSectionsBefore = [self numberOfSections];
     _activeViewMappings = activeViewMappings;
 
-    // Update the new mappings to the latest commit. Mappings not currently being active will have become stale
-    [self.connection readWithBlock:^(YapDatabaseReadTransaction *transaction) {
-        for (YapDatabaseViewMappings *mappings in self.activeViewMappings) {
-            [mappings updateWithTransaction:transaction];
-        }
-    }];
-
     if (animated) {
         [self.view frz_performBatchUpdates:^{
+            [self updateActiveViewMappings];
             if (numberOfSectionsBefore > 0) {
                 [self.view deleteSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, numberOfSectionsBefore)]];
             }
@@ -138,16 +132,8 @@
             }
         } completion:nil];
     } else {
+        [self updateActiveViewMappings];
         [self.view reloadData];
-
-        // A bug in UICollectionView causes it to reloadData before performing batch updates if it hasn't
-        // been laid out yet. This would work fine if it discarded the performBatchUpdates-block after
-        // doing this - but it doesn't which causes data model inconsistencies. Here's a fix that makes
-        // sure the collection view is laid out before performing any batch updates.
-        // More info: http://stackoverflow.com/questions/26898835/uicollectionview-performbatchupdates-asserts-unexpectedly-if-view-needs-layout
-        if ([self.view isKindOfClass:[UICollectionView class]]) {
-            [(UICollectionView *)self.view layoutIfNeeded];
-        }
     }
 }
 
@@ -234,21 +220,23 @@
     }
 
     NSArray *notifications = notification.userInfo[@"notifications"];
-    FRZAggregatedViewChanges *changes = [self calculateAggregatedChangesForDatabaseNotifications:notifications];
 
-    if (!changes.hasAnyChanges) {
+    if (![self hasAnyChangesForNotifications:notifications]) {
+        [self updateActiveViewMappings];
         return;
     }
 
     [self willBeginUpdates];
 
     if (self.shouldAnimateUpdates == NO || ([self.view isKindOfClass:[UIView class]] && [(UIView *)self.view window] == nil)) {
+        [self updateActiveViewMappings];
         [self.view reloadData];
         [self didEndUpdates];
         return;
     }
 
     [self.view frz_performBatchUpdates:^{
+        FRZAggregatedViewChanges *changes = [self calculateAggregatedChangesForDatabaseNotifications:notifications];
         [self.view deleteSections:changes.deletedSections];
         [self.view insertSections:changes.insertedSections];
         [self.view deleteItemsAtIndexPaths:changes.deletedIndexPaths];
@@ -259,6 +247,34 @@
         }];
     } completion:^(BOOL finished) {
         [self didEndUpdates];
+    }];
+}
+
+/**
+ A quick check to see if any of the views currently being managed have any changes since
+ the latest update of the connection
+ */
+- (BOOL)hasAnyChangesForNotifications:(NSArray *)notifications
+{
+    for (YapDatabaseViewMappings *mappings in self.activeViewMappings) {
+        YapDatabaseViewConnection *viewConnection = [self.connection extension:mappings.view];
+        if ([viewConnection hasChangesForNotifications:notifications]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+/**
+ Updates active view mappings to the latest commit on connection, without
+ calculating any changeset
+ */
+- (void)updateActiveViewMappings
+{
+    [self.connection readWithBlock:^(YapDatabaseReadTransaction *transaction) {
+        for (YapDatabaseViewMappings *mappings in self.activeViewMappings) {
+            [mappings updateWithTransaction:transaction];
+        }
     }];
 }
 
