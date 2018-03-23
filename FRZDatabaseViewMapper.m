@@ -46,6 +46,14 @@
 
 #pragma mark - Public
 
+- (void)setView:(id<FRZDatabaseMappable>)view
+{
+    _view = view;
+    if (self.activeViewMappings.count > 0) {
+        [_view reloadData];
+    }
+}
+
 - (NSUInteger)numberOfSections
 {
     return [[self.activeViewMappings valueForKeyPath:@"@sum.numberOfSections"] integerValue];
@@ -117,14 +125,13 @@
 
 - (void)setActiveViewMappings:(NSArray<YapDatabaseViewMappings *> *)activeViewMappings animated:(BOOL)animated
 {
-    NSUInteger numberOfSectionsBefore = [self numberOfSections];
     _activeViewMappings = activeViewMappings;
 
     if (animated) {
         [self.view frz_performBatchUpdates:^{
             [self updateActiveViewMappings];
-            if (numberOfSectionsBefore > 0) {
-                [self.view deleteSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, numberOfSectionsBefore)]];
+            if (self.view.numberOfSections > 0) {
+                [self.view deleteSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, self.view.numberOfSections)]];
             }
             NSInteger numberOfSectionsAfter = [self numberOfSections];
             if (numberOfSectionsAfter > 0) {

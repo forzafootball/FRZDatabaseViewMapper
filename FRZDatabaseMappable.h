@@ -21,6 +21,8 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @protocol FRZDatabaseMappable <NSObject>
 
+@property (nonatomic, readonly) NSInteger numberOfSections;
+
 - (void)reloadData;
 
 - (void)insertSections:(NSIndexSet *)sections;
