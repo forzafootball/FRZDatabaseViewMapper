@@ -42,18 +42,14 @@
 
 - (void)frz_performBatchUpdates:(void (NS_NOESCAPE ^ _Nullable)(void))updates completion:(void (^ _Nullable)(BOOL finished))completion
 {
-    if (@available(iOS 11.0, *)) {
-        [self performBatchUpdates:updates completion:completion];
-    } else {
-        [CATransaction begin];
-        [CATransaction setCompletionBlock:^{
-            completion(YES);
-        }];
-        [self beginUpdates];
-        updates();
-        [self endUpdates];
-        [CATransaction commit];
-    }
+    [CATransaction begin];
+    [CATransaction setCompletionBlock:^{
+        completion(YES);
+    }];
+    [self beginUpdates];
+    updates();
+    [self endUpdates];
+    [CATransaction commit];
 }
 
 @end
