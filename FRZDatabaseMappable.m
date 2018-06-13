@@ -44,7 +44,9 @@
 {
     [CATransaction begin];
     [CATransaction setCompletionBlock:^{
-        completion(YES);
+        if (completion) {
+            completion(YES);
+        }
     }];
     [self beginUpdates];
     updates();
