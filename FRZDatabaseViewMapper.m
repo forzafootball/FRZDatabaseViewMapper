@@ -451,11 +451,12 @@
 {
     [self curateMoves];
 
-    [view deleteSections:self.deletedSections];
-    [view insertSections:self.insertedSections];
-    [view deleteItemsAtIndexPaths:self.deletedIndexPaths.allObjects];
-    [view insertItemsAtIndexPaths:self.insertedIndexPaths.allObjects];
-    [view reloadItemsAtIndexPaths:self.updatedIndexPaths.allObjects];
+    if (self.deletedSections.count > 0) [view deleteSections:self.deletedSections];
+    if (self.insertedSections.count > 0) [view insertSections:self.insertedSections];
+    if (self.deletedIndexPaths.count > 0) [view deleteItemsAtIndexPaths:self.deletedIndexPaths.allObjects];
+    if (self.insertedIndexPaths.count > 0) [view insertItemsAtIndexPaths:self.insertedIndexPaths.allObjects];
+    if (self.updatedIndexPaths.count > 0) [view reloadItemsAtIndexPaths:self.updatedIndexPaths.allObjects];
+
     [self.movedIndexPaths enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *oldIndexPath, NSIndexPath *newIndexPath, BOOL *stop) {
         [view moveItemAtIndexPath:oldIndexPath toIndexPath:newIndexPath];
     }];
