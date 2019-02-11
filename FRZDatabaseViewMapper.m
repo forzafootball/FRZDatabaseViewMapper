@@ -17,11 +17,10 @@
 
 - (void)insertSection:(NSUInteger)section;
 - (void)deleteSection:(NSUInteger)section;
-- (void)insertIndexPathForItem:(NSUInteger)item inSection:(NSUInteger)section;
-- (void)updateIndexPathForItem:(NSUInteger)item inSection:(NSUInteger)section;
-- (void)deleteIndexPathForItem:(NSUInteger)item inSection:(NSUInteger)section;
-- (void)moveIndexPathForItem:(NSUInteger)oldItem inSection:(NSUInteger)oldSection
-          toIndexPathForItem:(NSUInteger)newItem inSection:(NSUInteger)newSection;
+- (void)insertIndexPath:(NSIndexPath *)indexPath;
+- (void)deleteIndexPath:(NSIndexPath *)indexPath;
+- (void)updateIndexPath:(NSIndexPath *)indexPath;
+- (void)moveIndexPath:(NSIndexPath *)oldIndexPath toIndexPath:(NSIndexPath *)newIndexPath;
 
 - (BOOL)hasAnyChanges;
 - (void)updateView:(id<FRZDatabaseMappable>)view;
@@ -315,24 +314,24 @@
             switch (change.type) {
                 case YapDatabaseViewChangeDelete: {
                     NSUInteger mappedSection = change.indexPath.section + sectionOffsetBeforeDeletions;
-                    [changes deleteIndexPathForItem:change.indexPath.item inSection:mappedSection];
+                    [changes deleteIndexPath:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedSection]];
                     break;
                 }
                 case YapDatabaseViewChangeInsert: {
                     NSUInteger mappedSection = change.newIndexPath.section + sectionOffsetAfterDeletions;
-                    [changes insertIndexPathForItem:change.newIndexPath.item inSection:mappedSection];
+                    [changes insertIndexPath:[NSIndexPath indexPathForItem:change.newIndexPath.item inSection:mappedSection]];
                     break;
                 }
                 case YapDatabaseViewChangeUpdate: {
                     NSUInteger mappedSection = change.indexPath.section + sectionOffsetBeforeDeletions;
-                    [changes updateIndexPathForItem:change.indexPath.item inSection:mappedSection];
+                    [changes updateIndexPath:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedSection]];
                     break;
                 }
                 case YapDatabaseViewChangeMove: {
                     NSUInteger mappedFromSection = change.indexPath.section + sectionOffsetBeforeDeletions;
                     NSUInteger mappedToSection = change.newIndexPath.section + sectionOffsetAfterDeletions;
-                    [changes moveIndexPathForItem:change.indexPath.item inSection:mappedFromSection
-                               toIndexPathForItem:change.newIndexPath.item inSection:mappedToSection];
+                    [changes moveIndexPath:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedFromSection]
+                               toIndexPath:[NSIndexPath indexPathForItem:change.newIndexPath.item inSection:mappedToSection]];
                     break;
                 }
             }
@@ -383,42 +382,23 @@
     [self.deletedSections addIndex:section];
 }
 
-- (void)insertIndexPathForItem:(NSUInteger)item inSection:(NSUInteger)section
-{
-    [self insertIndexPath:[NSIndexPath indexPathForItem:item inSection:section]];
-}
-
-- (void)deleteIndexPathForItem:(NSUInteger)item inSection:(NSUInteger)section
-{
-    [self deleteIndexPath:[NSIndexPath indexPathForItem:item inSection:section]];
-}
-
-- (void)updateIndexPathForItem:(NSUInteger)item inSection:(NSUInteger)section
-{
-    if (![self.deletedSections containsIndex:section]) {
-        [self.updatedIndexPaths addObject:[NSIndexPath indexPathForItem:item inSection:section]];
-    }
-}
-
 - (void)insertIndexPath:(NSIndexPath *)indexPath
 {
-    if (![self.insertedSections containsIndex:indexPath.section]) {
-        [self.insertedIndexPaths addObject:indexPath];
-    }
+    [self.insertedIndexPaths addObject:indexPath];
 }
 
 - (void)deleteIndexPath:(NSIndexPath *)indexPath
 {
-    if (![self.deletedSections containsIndex:indexPath.section]) {
-        [self.deletedIndexPaths addObject:indexPath];
-    }
+    [self.deletedIndexPaths addObject:indexPath];
 }
 
-- (void)moveIndexPathForItem:(NSUInteger)oldItem inSection:(NSUInteger)oldSection
-          toIndexPathForItem:(NSUInteger)newItem inSection:(NSUInteger)newSection
+- (void)updateIndexPath:(NSIndexPath *)indexPath
 {
-    NSIndexPath *oldIndexPath = [NSIndexPath indexPathForItem:oldItem inSection:oldSection];
-    NSIndexPath *newIndexPath = [NSIndexPath indexPathForItem:newItem inSection:newSection];
+    [self.updatedIndexPaths addObject:indexPath];
+}
+
+- (void)moveIndexPath:(NSIndexPath *)oldIndexPath toIndexPath:(NSIndexPath *)newIndexPath
+{
     [self.movedIndexPaths setObject:newIndexPath forKey:oldIndexPath];
 }
 
@@ -430,10 +410,26 @@
 /**
  There is a bug (I believe in YapDatabase) which results in there sometimes being
  moves to the same index paths as inserts. This crashes UITableView/UICollectionView,
- so we remove any moves which collide with inserts/deletes
+ so we remove any moves which collide with inserts/deletes.
+
+ We also remove any inserts and deletions to inserted and deleted sections, since they
+ are not needed, and results in cells being dequeued and displayed twice in appearing
+ cells.
  */
-- (void)curateMoves
+- (void)curateUpdates
 {
+    [self.insertedIndexPaths filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSIndexPath *indexPath, NSDictionary<NSString *,id> * _Nullable bindings) {
+        return ![self.insertedSections containsIndex:indexPath.section];
+    }]];
+
+    [self.deletedIndexPaths filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSIndexPath *indexPath, NSDictionary<NSString *,id> * _Nullable bindings) {
+        return ![self.deletedSections containsIndex:indexPath.section];
+    }]];
+
+    [self.updatedIndexPaths filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSIndexPath *indexPath, NSDictionary<NSString *,id> * _Nullable bindings) {
+        return ![self.deletedSections containsIndex:indexPath.section];
+    }]];
+
     NSMutableArray *keysToDelete = [NSMutableArray new];
     [self.movedIndexPaths enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *oldIndexPath, NSIndexPath *newIndexPath, BOOL *stop) {
         if ([self.insertedIndexPaths containsObject:newIndexPath] || [self.insertedSections containsIndex:newIndexPath.section]) {
@@ -449,7 +445,7 @@
 
 - (void)updateView:(id<FRZDatabaseMappable>)view
 {
-    [self curateMoves];
+    [self curateUpdates];
 
     if (self.deletedSections.count > 0) [view deleteSections:self.deletedSections];
     if (self.insertedSections.count > 0) [view insertSections:self.insertedSections];
