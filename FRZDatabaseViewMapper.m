@@ -30,6 +30,7 @@
 @interface FRZDatabaseViewMapper()
 
 @property (nonatomic, strong) YapDatabaseConnection *connection;
+@property (nonatomic, assign) BOOL updatesPaused;
 
 @end
 
@@ -50,6 +51,14 @@
 }
 
 #pragma mark - Public
+
+- (void)setShouldPauseUpdates:(BOOL)shouldPauseUpdates
+{
+    if (_shouldPauseUpdates == YES && shouldPauseUpdates == NO) {
+        [self setActiveViewMappings:self.activeViewMappings animated:NO];
+    }
+    _shouldPauseUpdates = shouldPauseUpdates;
+}
 
 - (void)setView:(id<FRZDatabaseMappable>)view
 {
@@ -227,7 +236,7 @@
 {
     NSParameterAssert(notification.userInfo[@"notifications"]);
 
-    if (self.activeViewMappings.count == 0) {
+    if (self.activeViewMappings.count == 0 || self.updatesPaused) {
         return;
     }
 
