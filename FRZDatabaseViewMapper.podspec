@@ -1,7 +1,7 @@
 # coding: utf-8
 Pod::Spec.new do |spec|
   spec.name         = 'FRZDatabaseViewMapper'
-  spec.version      = '1.0.1'
+  spec.version      = '1.0.2'
   spec.platform     = :ios, '9.0'
   spec.homepage     = 'https://github.com/ForzaFootball/FRZDatabaseViewMapper'
   spec.authors      = { 'Joel Ekström' => 'joel@forzafootball.com' }
