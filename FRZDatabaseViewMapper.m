@@ -9,16 +9,21 @@
 #import "FRZDatabaseViewMapper.h"
 #import <YapDatabase/YapDatabaseView.h>
 
+/**
+ A storage object for batch updates. Add updates to this items, and then
+ when done, call updateView to perform them all at once.
+ */
 @interface FRZAggregatedViewChanges : NSObject
 
-@property (nonatomic, strong) NSMutableIndexSet *deletedSections;
-@property (nonatomic, strong) NSMutableIndexSet *insertedSections;
-@property (nonatomic, strong) NSMutableArray<NSIndexPath *> *deletedIndexPaths;
-@property (nonatomic, strong) NSMutableArray<NSIndexPath *> *insertedIndexPaths;
-@property (nonatomic, strong) NSMutableArray<NSIndexPath *> *updatedIndexPaths;
-@property (nonatomic, strong) NSMutableDictionary<NSIndexPath *, NSIndexPath *> *movedIndexPaths;
+- (void)insertSection:(NSUInteger)section;
+- (void)deleteSection:(NSUInteger)section;
+- (void)insertIndexPath:(NSIndexPath *)indexPath;
+- (void)deleteIndexPath:(NSIndexPath *)indexPath;
+- (void)updateIndexPath:(NSIndexPath *)indexPath;
+- (void)moveIndexPath:(NSIndexPath *)oldIndexPath toIndexPath:(NSIndexPath *)newIndexPath;
 
 - (BOOL)hasAnyChanges;
+- (void)updateView:(id<FRZDatabaseMappable>)view;
 
 @end
 
@@ -241,17 +246,10 @@
         [self didEndUpdates];
         return;
     }
-
+    
     [self.view frz_performBatchUpdates:^{
         FRZAggregatedViewChanges *changes = [self calculateAggregatedChangesForDatabaseNotifications:notifications];
-        [self.view deleteSections:changes.deletedSections];
-        [self.view insertSections:changes.insertedSections];
-        [self.view deleteItemsAtIndexPaths:changes.deletedIndexPaths];
-        [self.view insertItemsAtIndexPaths:changes.insertedIndexPaths];
-        [self.view reloadItemsAtIndexPaths:changes.updatedIndexPaths];
-        [changes.movedIndexPaths enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *oldIndexPath, NSIndexPath *newIndexPath, BOOL *stop) {
-            [self.view moveItemAtIndexPath:oldIndexPath toIndexPath:newIndexPath];
-        }];
+        [changes updateView:self.view];
     } completion:^(BOOL finished) {
         [self didEndUpdates];
     }];
@@ -306,9 +304,9 @@
 
         for (YapDatabaseViewSectionChange *change in sectionChanges) {
             if (change.type == YapDatabaseViewChangeDelete) {
-                [changes.deletedSections addIndex:change.index + sectionOffsetBeforeDeletions];
+                [changes deleteSection:change.index + sectionOffsetBeforeDeletions];
             } else {
-                [changes.insertedSections addIndex:change.index + sectionOffsetAfterDeletions];
+                [changes insertSection:change.index + sectionOffsetAfterDeletions];
             }
         }
 
@@ -316,26 +314,26 @@
             switch (change.type) {
                 case YapDatabaseViewChangeDelete: {
                     NSUInteger mappedSection = change.indexPath.section + sectionOffsetBeforeDeletions;
-                    if (![changes.deletedSections containsIndex:mappedSection])
-                        [changes.deletedIndexPaths addObject:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedSection]];
+                    [changes deleteIndexPath:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedSection]];
                     break;
                 }
                 case YapDatabaseViewChangeInsert: {
                     NSUInteger mappedSection = change.newIndexPath.section + sectionOffsetAfterDeletions;
-                    if (![changes.insertedSections containsIndex:mappedSection])
-                        [changes.insertedIndexPaths addObject:[NSIndexPath indexPathForItem:change.newIndexPath.item inSection:mappedSection]];
+                    [changes insertIndexPath:[NSIndexPath indexPathForItem:change.newIndexPath.item inSection:mappedSection]];
                     break;
                 }
                 case YapDatabaseViewChangeUpdate: {
                     NSUInteger mappedSection = change.indexPath.section + sectionOffsetBeforeDeletions;
-                    if (![changes.deletedSections containsIndex:mappedSection])
-                        [changes.updatedIndexPaths addObject:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedSection]];
+                    [changes updateIndexPath:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedSection]];
                     break;
                 }
-                case YapDatabaseViewChangeMove:
-                    [changes.movedIndexPaths setObject:[NSIndexPath indexPathForItem:change.newIndexPath.item inSection:change.newIndexPath.section + sectionOffsetAfterDeletions]
-                                                forKey:[NSIndexPath indexPathForItem:change.indexPath.item inSection:change.indexPath.section + sectionOffsetBeforeDeletions]];
+                case YapDatabaseViewChangeMove: {
+                    NSUInteger mappedFromSection = change.indexPath.section + sectionOffsetBeforeDeletions;
+                    NSUInteger mappedToSection = change.newIndexPath.section + sectionOffsetAfterDeletions;
+                    [changes moveIndexPath:[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedFromSection]
+                               toIndexPath:[NSIndexPath indexPathForItem:change.newIndexPath.item inSection:mappedToSection]];
                     break;
+                }
             }
         }
 
@@ -348,6 +346,17 @@
 
 @end
 
+@interface FRZAggregatedViewChanges()
+
+@property (nonatomic, strong) NSMutableIndexSet *deletedSections;
+@property (nonatomic, strong) NSMutableIndexSet *insertedSections;
+@property (nonatomic, strong) NSMutableSet<NSIndexPath *> *deletedIndexPaths;
+@property (nonatomic, strong) NSMutableSet<NSIndexPath *> *insertedIndexPaths;
+@property (nonatomic, strong) NSMutableSet<NSIndexPath *> *updatedIndexPaths;
+@property (nonatomic, strong) NSMutableDictionary<NSIndexPath *, NSIndexPath *> *movedIndexPaths;
+
+@end
+
 @implementation FRZAggregatedViewChanges
 
 - (instancetype)init
@@ -355,17 +364,98 @@
     if (self = [super init]) {
         self.deletedSections = [NSMutableIndexSet new];
         self.insertedSections = [NSMutableIndexSet new];
-        self.deletedIndexPaths = [NSMutableArray new];
-        self.insertedIndexPaths = [NSMutableArray new];
-        self.updatedIndexPaths = [NSMutableArray new];
+        self.deletedIndexPaths = [NSMutableSet new];
+        self.insertedIndexPaths = [NSMutableSet new];
+        self.updatedIndexPaths = [NSMutableSet new];
         self.movedIndexPaths = [NSMutableDictionary new];
     }
     return self;
 }
 
+- (void)insertSection:(NSUInteger)section
+{
+    [self.insertedSections addIndex:section];
+}
+
+- (void)deleteSection:(NSUInteger)section
+{
+    [self.deletedSections addIndex:section];
+}
+
+- (void)insertIndexPath:(NSIndexPath *)indexPath
+{
+    [self.insertedIndexPaths addObject:indexPath];
+}
+
+- (void)deleteIndexPath:(NSIndexPath *)indexPath
+{
+    [self.deletedIndexPaths addObject:indexPath];
+}
+
+- (void)updateIndexPath:(NSIndexPath *)indexPath
+{
+    [self.updatedIndexPaths addObject:indexPath];
+}
+
+- (void)moveIndexPath:(NSIndexPath *)oldIndexPath toIndexPath:(NSIndexPath *)newIndexPath
+{
+    [self.movedIndexPaths setObject:newIndexPath forKey:oldIndexPath];
+}
+
 - (BOOL)hasAnyChanges
 {
     return self.deletedSections.count > 0 || self.insertedSections.count > 0 || self.deletedIndexPaths.count > 0 || self.insertedIndexPaths.count > 0 || self.updatedIndexPaths.count > 0 || self.movedIndexPaths.count > 0;
+}
+
+/**
+ There is a bug (I believe in YapDatabase) which results in there sometimes being
+ moves to the same index paths as inserts. This crashes UITableView/UICollectionView,
+ so we remove any moves which collide with inserts/deletes.
+
+ We also remove any inserts and deletions to inserted and deleted sections, since they
+ are not needed, and results in cells being dequeued and displayed twice in appearing
+ cells.
+ */
+- (void)curateUpdates
+{
+    [self.insertedIndexPaths filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSIndexPath *indexPath, NSDictionary<NSString *,id> * _Nullable bindings) {
+        return ![self.insertedSections containsIndex:indexPath.section];
+    }]];
+
+    [self.deletedIndexPaths filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSIndexPath *indexPath, NSDictionary<NSString *,id> * _Nullable bindings) {
+        return ![self.deletedSections containsIndex:indexPath.section];
+    }]];
+
+    [self.updatedIndexPaths filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSIndexPath *indexPath, NSDictionary<NSString *,id> * _Nullable bindings) {
+        return ![self.deletedSections containsIndex:indexPath.section];
+    }]];
+
+    NSMutableArray *keysToDelete = [NSMutableArray new];
+    [self.movedIndexPaths enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *oldIndexPath, NSIndexPath *newIndexPath, BOOL *stop) {
+        if ([self.insertedIndexPaths containsObject:newIndexPath] || [self.insertedSections containsIndex:newIndexPath.section]) {
+            [keysToDelete addObject:oldIndexPath];
+            [self deleteIndexPath:oldIndexPath];
+        } else if ([self.deletedIndexPaths containsObject:oldIndexPath] || [self.deletedSections containsIndex:oldIndexPath.section]) {
+            [keysToDelete addObject:oldIndexPath];
+            [self insertIndexPath:newIndexPath];
+        }
+    }];
+    [self.movedIndexPaths removeObjectsForKeys:keysToDelete];
+}
+
+- (void)updateView:(id<FRZDatabaseMappable>)view
+{
+    [self curateUpdates];
+
+    if (self.deletedSections.count > 0) [view deleteSections:self.deletedSections];
+    if (self.insertedSections.count > 0) [view insertSections:self.insertedSections];
+    if (self.deletedIndexPaths.count > 0) [view deleteItemsAtIndexPaths:self.deletedIndexPaths.allObjects];
+    if (self.insertedIndexPaths.count > 0) [view insertItemsAtIndexPaths:self.insertedIndexPaths.allObjects];
+    if (self.updatedIndexPaths.count > 0) [view reloadItemsAtIndexPaths:self.updatedIndexPaths.allObjects];
+
+    [self.movedIndexPaths enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *oldIndexPath, NSIndexPath *newIndexPath, BOOL *stop) {
+        [view moveItemAtIndexPath:oldIndexPath toIndexPath:newIndexPath];
+    }];
 }
 
 - (NSString *)description
