@@ -32,6 +32,13 @@
 - (instancetype)init NS_UNAVAILABLE;
 
 /**
+ Initialize the viewMapper with a database. The view mapper will create and manage a long-lived
+ read connection internally. If you use a permanent long-lived read connection for caching,
+ and want the view mapper to read from that, use initWithConnection:updateNotificationName: instead.
+ */
+- (instancetype)initWithDatabase:(YapDatabase *)database NS_DESIGNATED_INITIALIZER;
+
+/**
  Initialize the viewMapper with a connection and an update notification
 
  @param connection A connection in a longLivedReadTransaction, typically the UI connection

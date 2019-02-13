@@ -36,6 +36,17 @@
 
 @implementation FRZDatabaseViewMapper
 
+- (instancetype)initWithDatabase:(YapDatabase *)database
+{
+    if (self = [super init]) {
+        self.connection = [database newConnection];
+        [self.connection beginLongLivedReadTransaction];
+        self.shouldAnimateUpdates = YES;
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(yapDatabaseModified:) name:YapDatabaseModifiedNotification object:database];
+    }
+    return self;
+}
+
 - (instancetype)initWithConnection:(YapDatabaseConnection *)connection updateNotificationName:(NSNotificationName)updateNotificationName
 {
     if (self = [super init]) {
@@ -217,15 +228,31 @@
     }
 }
 
+/**
+ This method is only called if the view mapper is managing its own, internal database connection.
+ It begins a new long-lived read transaction and forwards the change notifications to the normal handler
+ */
+- (void)yapDatabaseModified:(NSNotification *)notification
+{
+    NSArray<NSNotification *> *changeNotifications = [self.connection beginLongLivedReadTransaction];
+    [self updateWithNotifications:changeNotifications];
+}
+
+/**
+ This method is called when an external YapDatabaseConnection is updated, with the registered
+ NSNotificationName. Used when the client app manages the connection.
+ */
 - (void)databaseConnectionDidUpdate:(NSNotification *)notification
 {
     NSParameterAssert(notification.userInfo[@"notifications"]);
+    [self updateWithNotifications:notification.userInfo[@"notifications"]];
+}
 
+- (void)updateWithNotifications:(NSArray<NSNotification *> *)notifications
+{
     if (self.activeViewMappings.count == 0 || self.updatesPaused) {
         return;
     }
-
-    NSArray *notifications = notification.userInfo[@"notifications"];
 
     if (![self hasAnyChangesForNotifications:notifications]) {
         [self updateActiveViewMappings];
@@ -239,7 +266,7 @@
         [self didEndUpdates];
         return;
     }
-    
+
     [self.view frz_performBatchUpdates:^{
         FRZAggregatedViewChanges *changes = [self calculateAggregatedChangesForDatabaseNotifications:notifications];
         [changes updateView:self.view];
@@ -252,7 +279,7 @@
  A quick check to see if any of the views currently being managed have any changes since
  the latest update of the connection
  */
-- (BOOL)hasAnyChangesForNotifications:(NSArray *)notifications
+- (BOOL)hasAnyChangesForNotifications:(NSArray<NSNotification *> *)notifications
 {
     for (YapDatabaseViewMappings *mappings in self.activeViewMappings) {
         YapDatabaseViewConnection *viewConnection = [self.connection extension:mappings.view];
