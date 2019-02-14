@@ -61,6 +61,14 @@
 - (void)insertMappings:(YapDatabaseViewMappings *)mappings atIndex:(NSUInteger)index animated:(BOOL)animated;
 
 /**
+ Pausing updates is good when the mapped view disappears. The view mapper will stop listening for changes on the
+ database connection which will save in on processing time. Unpausing will forward the current view mappings to the
+ latest database commit and reload the view. A good practice is to set pauseUpdates = YES in viewWillDisappear:
+ and pauseUpdates = NO in viewWillAppear:.
+ */
+@property (nonatomic, assign) BOOL shouldPauseUpdates;
+
+/**
  When set, this view will be automatically kept updated with any
  changes to the database affecting activeViewMappings. UITableView
  and UICollectionView works by default, but any FRZDatabaseMappable-object

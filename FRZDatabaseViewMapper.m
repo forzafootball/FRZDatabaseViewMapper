@@ -30,6 +30,7 @@
 @interface FRZDatabaseViewMapper()
 
 @property (nonatomic, strong) YapDatabaseConnection *connection;
+@property (nonatomic, assign) BOOL updatesPaused;
 
 @end
 
@@ -50,6 +51,14 @@
 }
 
 #pragma mark - Public
+
+- (void)setShouldPauseUpdates:(BOOL)shouldPauseUpdates
+{
+    if (_shouldPauseUpdates == YES && shouldPauseUpdates == NO) {
+        [self updateActiveViewMappingsAndViewAnimated:NO];
+    }
+    _shouldPauseUpdates = shouldPauseUpdates;
+}
 
 - (void)setView:(id<FRZDatabaseMappable>)view
 {
@@ -131,22 +140,7 @@
 - (void)setActiveViewMappings:(NSArray<YapDatabaseViewMappings *> *)activeViewMappings animated:(BOOL)animated
 {
     _activeViewMappings = activeViewMappings;
-
-    if (animated) {
-        [self.view frz_performBatchUpdates:^{
-            [self updateActiveViewMappings];
-            if (self.view.numberOfSections > 0) {
-                [self.view deleteSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, self.view.numberOfSections)]];
-            }
-            NSInteger numberOfSectionsAfter = [self numberOfSections];
-            if (numberOfSectionsAfter > 0) {
-                [self.view insertSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, numberOfSectionsAfter)]];
-            }
-        } completion:nil];
-    } else {
-        [self updateActiveViewMappings];
-        [self.view reloadData];
-    }
+    [self updateActiveViewMappingsAndViewAnimated:animated];
 }
 
 - (void)removeMappings:(YapDatabaseViewMappings *)mappings animated:(BOOL)animated
@@ -227,7 +221,7 @@
 {
     NSParameterAssert(notification.userInfo[@"notifications"]);
 
-    if (self.activeViewMappings.count == 0) {
+    if (self.activeViewMappings.count == 0 || self.updatesPaused) {
         return;
     }
 
@@ -241,8 +235,7 @@
     [self willBeginUpdates];
 
     if (self.shouldAnimateUpdates == NO || ([self.view isKindOfClass:[UIView class]] && [(UIView *)self.view window] == nil)) {
-        [self updateActiveViewMappings];
-        [self.view reloadData];
+        [self updateActiveViewMappingsAndViewAnimated:NO];
         [self didEndUpdates];
         return;
     }
@@ -281,6 +274,29 @@
             [mappings updateWithTransaction:transaction];
         }
     }];
+}
+
+/**
+ Fast forwards all active view mappings to the latest database commit,
+ and reflects the changes in the view, with an optional animation.
+ */
+- (BOOL)updateActiveViewMappingsAndViewAnimated:(BOOL)animated
+{
+    if (animated) {
+        [self.view frz_performBatchUpdates:^{
+            [self updateActiveViewMappings];
+            if (self.view.numberOfSections > 0) {
+                [self.view deleteSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, self.view.numberOfSections)]];
+            }
+            NSInteger numberOfSectionsAfter = [self numberOfSections];
+            if (numberOfSectionsAfter > 0) {
+                [self.view insertSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, numberOfSectionsAfter)]];
+            }
+        } completion:nil];
+    } else {
+        [self updateActiveViewMappings];
+        [self.view reloadData];
+    }
 }
 
 /**
