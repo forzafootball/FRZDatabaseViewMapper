@@ -307,7 +307,7 @@
  Fast forwards all active view mappings to the latest database commit,
  and reflects the changes in the view, with an optional animation.
  */
-- (BOOL)updateActiveViewMappingsAndViewAnimated:(BOOL)animated
+- (void)updateActiveViewMappingsAndViewAnimated:(BOOL)animated
 {
     if (animated) {
         [self.view frz_performBatchUpdates:^{
