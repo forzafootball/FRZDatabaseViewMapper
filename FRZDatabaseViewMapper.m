@@ -30,7 +30,6 @@
 @interface FRZDatabaseViewMapper()
 
 @property (nonatomic, strong) YapDatabaseConnection *connection;
-@property (nonatomic, assign) BOOL updatesPaused;
 
 @end
 
@@ -250,7 +249,7 @@
 
 - (void)updateWithNotifications:(NSArray<NSNotification *> *)notifications
 {
-    if (self.activeViewMappings.count == 0 || self.updatesPaused) {
+    if (self.activeViewMappings.count == 0 || self.shouldPauseUpdates) {
         return;
     }
 
