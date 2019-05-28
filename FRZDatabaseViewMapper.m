@@ -248,6 +248,15 @@
         return;
     }
 
+    /**
+     This is a crash fix for a bug in UITableView and UICollectionView. Reloads are not compatible
+     with other types of updates inside the same block of batch updates, so we run them independently
+     before.
+     More info here: https://github.com/yapstudios/YapDatabase/issues/489
+     */
+    NSArray<NSIndexPath *> *updatedIndexPaths = [self mappedIndexPathsToReloadForNotifications:notifications];
+    if (updatedIndexPaths.count > 0) [self.view reloadItemsAtIndexPaths:updatedIndexPaths];
+
     [self.view frz_performBatchUpdates:^{
         [self performViewUpdatesForNotifications:notifications];
     } completion:^(BOOL finished) {
@@ -344,8 +353,7 @@
                     break;
                 }
                 case YapDatabaseViewChangeUpdate: {
-                    NSUInteger mappedSection = change.indexPath.section + sectionOffsetBeforeDeletions;
-                    [self.view reloadItemsAtIndexPaths:@[[NSIndexPath indexPathForItem:change.indexPath.item inSection:mappedSection]]];
+                    // Do nothing here - reloads were handled independently to fix crashes
                     break;
                 }
                 case YapDatabaseViewChangeMove: {
@@ -361,6 +369,48 @@
         sectionOffsetBeforeDeletions += numberOfSectionsBeforeUpdates;
         sectionOffsetAfterDeletions += mappings.numberOfSections;
     }];
+}
+
+/**
+ Returns mapped indexPaths for all updated rows in the active viewMappings
+ for a set of update notifications.
+ */
+- (NSArray<NSIndexPath *> *)mappedIndexPathsToReloadForNotifications:(NSArray<NSNotification *> *)notifications
+{
+    NSMutableArray<NSIndexPath *> *mappedIndexPaths = [NSMutableArray new];
+    [self.connection readWithBlock:^(YapDatabaseReadTransaction *transaction) {
+        __block NSInteger sectionOffset = 0;
+        [self.activeViewMappings enumerateObjectsUsingBlock:^(YapDatabaseViewMappings *mappings, NSUInteger idx, BOOL * _Nonnull stop) {
+            for (NSIndexPath *indexPath in [self indexPathsToReloadForMappings:mappings notifications:notifications transaction:transaction]) {
+                [mappedIndexPaths addObject:[NSIndexPath indexPathForItem:indexPath.item inSection:indexPath.section + sectionOffset]];
+            }
+            sectionOffset += mappings.numberOfSections;
+        }];
+    }];
+    return mappedIndexPaths;
+}
+
+/**
+ Returns unmapped indexPaths for all the updated rows for a given set of viewMappings
+ and update notifications.
+ */
+- (NSArray<NSIndexPath *> *)indexPathsToReloadForMappings:(YapDatabaseViewMappings *)mappings
+                                            notifications:(NSArray<NSNotification *> *)notifications
+                                              transaction:(YapDatabaseReadTransaction *)transaction
+{
+    NSMutableArray<NSIndexPath *> *indexPaths = [NSMutableArray new];
+    for (NSNotification *notification in notifications) {
+        NSArray *changes = notification.userInfo[YapDatabaseExtensionsKey][mappings.view][YapDatabaseViewChangesKey];
+        for (id change in changes) {
+            if ([change isKindOfClass:YapDatabaseViewRowChange.class] && [(YapDatabaseViewRowChange *)change type] == YapDatabaseViewChangeUpdate) {
+                YapDatabaseViewTransaction *viewTransaction = (YapDatabaseViewTransaction *)[transaction extension:mappings.view];
+                YapDatabaseViewRowChange *update = (YapDatabaseViewRowChange *)change;
+                NSIndexPath *indexPath = [viewTransaction indexPathForKey:update.collectionKey.key inCollection:update.collectionKey.collection withMappings:mappings];
+                if (indexPath) [indexPaths addObject:indexPath];
+            }
+        }
+    }
+    return indexPaths;
 }
 
 @end
