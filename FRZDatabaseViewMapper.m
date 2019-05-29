@@ -47,7 +47,7 @@
 - (void)setShouldPauseUpdates:(BOOL)shouldPauseUpdates
 {
     if (_shouldPauseUpdates == YES && shouldPauseUpdates == NO) {
-        [self updateActiveViewMappingsAndViewAnimated:NO];
+        [self fastForwardActiveViewMappingsAndViewAnimated:NO];
     }
     _shouldPauseUpdates = shouldPauseUpdates;
 }
@@ -132,7 +132,7 @@
 - (void)setActiveViewMappings:(NSArray<YapDatabaseViewMappings *> *)activeViewMappings animated:(BOOL)animated
 {
     _activeViewMappings = activeViewMappings;
-    [self updateActiveViewMappingsAndViewAnimated:animated];
+    [self fastForwardActiveViewMappingsAndViewAnimated:animated];
 }
 
 - (void)removeMappings:(YapDatabaseViewMappings *)mappings animated:(BOOL)animated
@@ -243,7 +243,7 @@
     [self willBeginUpdates];
 
     if (self.shouldAnimateUpdates == NO || ([self.view isKindOfClass:[UIView class]] && [(UIView *)self.view window] == nil)) {
-        [self updateActiveViewMappingsAndViewAnimated:NO];
+        [self fastForwardActiveViewMappingsAndViewAnimated:NO];
         [self didEndUpdates];
         return;
     }
@@ -254,11 +254,10 @@
      before.
      More info here: https://github.com/yapstudios/YapDatabase/issues/489
      */
-    NSArray<NSIndexPath *> *updatedIndexPaths = [self mappedIndexPathsToReloadForNotifications:notifications];
-    if (updatedIndexPaths.count > 0) [self.view reloadItemsAtIndexPaths:updatedIndexPaths];
+    [self performUpdatesForNotifications:notifications];
 
     [self.view frz_performBatchUpdates:^{
-        [self performViewUpdatesForNotifications:notifications];
+        [self performInsertsDeletesAndMovesForNotifications:notifications];
     } completion:^(BOOL finished) {
         [self didEndUpdates];
     }];
@@ -295,8 +294,10 @@
 /**
  Fast forwards all active view mappings to the latest database commit,
  and reflects the changes in the view, with an optional animation.
+ The animation is a simpler transition, it doesn't actually do
+ propert updates/inserts/deletes/moves.
  */
-- (void)updateActiveViewMappingsAndViewAnimated:(BOOL)animated
+- (void)fastForwardActiveViewMappingsAndViewAnimated:(BOOL)animated
 {
     if (animated) {
         [self.view frz_performBatchUpdates:^{
@@ -318,10 +319,13 @@
 /**
  Since section changes and row changes are per view mappings, this function will map the changes from individual mappings
  into the actual sections seen by the table view.
+
+ This function will update activeViewMappings to the current database commit, and run
+ inserts/deletes/moves but skip updates.
  */
-- (void)performViewUpdatesForNotifications:(NSArray *)notifications
+- (void)performInsertsDeletesAndMovesForNotifications:(NSArray *)notifications
 {
-    // Deletes and reloads work on the table view states _before_ any other updates have happened,
+    // Deletes and work on the table view states _before_ any other updates have happened,
     // while inserts work on the state after the deletes have happened. Therefore, we must keep
     // both the previous and new offsets for each view mapping when we map the changes.
     __block NSInteger sectionOffsetBeforeDeletions = 0;
@@ -372,21 +376,33 @@
 }
 
 /**
+ This function will perform all YapDatabaseViewUpdates without updating the view mappings to the current
+ commit.
+ */
+- (void)performUpdatesForNotifications:(NSArray<NSNotification *> *)notifications
+{
+    __block NSArray<NSIndexPath *> *updatedIndexPaths = nil;
+    [self.connection readWithBlock:^(YapDatabaseReadTransaction *transaction) {
+        updatedIndexPaths = [self mappedIndexPathsToReloadForNotifications:notifications transaction:transaction];
+    }];
+    if (updatedIndexPaths.count > 0) [self.view reloadItemsAtIndexPaths:updatedIndexPaths];
+}
+
+/**
  Returns mapped indexPaths for all updated rows in the active viewMappings
  for a set of update notifications.
  */
 - (NSArray<NSIndexPath *> *)mappedIndexPathsToReloadForNotifications:(NSArray<NSNotification *> *)notifications
+                                                         transaction:(YapDatabaseReadTransaction *)transaction
 {
     NSMutableArray<NSIndexPath *> *mappedIndexPaths = [NSMutableArray new];
-    [self.connection readWithBlock:^(YapDatabaseReadTransaction *transaction) {
-        __block NSInteger sectionOffset = 0;
-        [self.activeViewMappings enumerateObjectsUsingBlock:^(YapDatabaseViewMappings *mappings, NSUInteger idx, BOOL * _Nonnull stop) {
-            for (NSIndexPath *indexPath in [self indexPathsToReloadForMappings:mappings notifications:notifications transaction:transaction]) {
-                [mappedIndexPaths addObject:[NSIndexPath indexPathForItem:indexPath.item inSection:indexPath.section + sectionOffset]];
-            }
-            sectionOffset += mappings.numberOfSections;
-        }];
-    }];
+    NSInteger sectionOffset = 0;
+    for (YapDatabaseViewMappings *mappings in self.activeViewMappings) {
+        for (NSIndexPath *indexPath in [self indexPathsToReloadForMappings:mappings notifications:notifications transaction:transaction]) {
+            [mappedIndexPaths addObject:[NSIndexPath indexPathForItem:indexPath.item inSection:indexPath.section + sectionOffset]];
+        }
+        sectionOffset += mappings.numberOfSections;
+    }
     return mappedIndexPaths;
 }
 
@@ -399,16 +415,17 @@
                                               transaction:(YapDatabaseReadTransaction *)transaction
 {
     NSMutableArray<NSIndexPath *> *indexPaths = [NSMutableArray new];
+    YapDatabaseViewTransaction *viewTransaction = (YapDatabaseViewTransaction *)[transaction extension:mappings.view];
     for (NSNotification *notification in notifications) {
         NSArray *changes = notification.userInfo[YapDatabaseExtensionsKey][mappings.view][YapDatabaseViewChangesKey];
-        for (id change in changes) {
-            if ([change isKindOfClass:YapDatabaseViewRowChange.class] && [(YapDatabaseViewRowChange *)change type] == YapDatabaseViewChangeUpdate) {
-                YapDatabaseViewTransaction *viewTransaction = (YapDatabaseViewTransaction *)[transaction extension:mappings.view];
-                YapDatabaseViewRowChange *update = (YapDatabaseViewRowChange *)change;
-                NSIndexPath *indexPath = [viewTransaction indexPathForKey:update.collectionKey.key inCollection:update.collectionKey.collection withMappings:mappings];
-                if (indexPath) [indexPaths addObject:indexPath];
-            }
-        }
+        NSIndexSet *updateIndexes = [changes indexesOfObjectsPassingTest:^BOOL(id change, NSUInteger idx, BOOL *stop) {
+            return [change isKindOfClass:YapDatabaseViewRowChange.class] && [(YapDatabaseViewRowChange *)change type] == YapDatabaseViewChangeUpdate;
+        }];
+
+        [changes enumerateObjectsAtIndexes:updateIndexes options:0 usingBlock:^(YapDatabaseViewRowChange *update, NSUInteger idx, BOOL *stop) {
+            NSIndexPath *indexPath = [viewTransaction indexPathForKey:update.collectionKey.key inCollection:update.collectionKey.collection withMappings:mappings];
+            if (indexPath) [indexPaths addObject:indexPath];
+        }];
     }
     return indexPaths;
 }
