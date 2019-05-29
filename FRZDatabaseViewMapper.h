@@ -20,6 +20,12 @@
 
 @end
 
+typedef NS_ENUM(NSUInteger, FRZDatabaseViewMapperAnimationStyle) {
+    FRZDatabaseViewMapperAnimationStyleFull,            // (Default) Proper animated updates (inserts/deletes/moves)
+    FRZDatabaseViewMapperAnimationStyleCrossDissolve,   // Simply reloadData followed by a quick cross dissolve (faster than full animations)
+    FRZDatabaseViewMapperAnimationStyleNone             // Only reload data, with no animations at all
+};
+
 /**
  This class manages keeping a UITableView (or collectionView) updated with animations,
  from a set of one or several view mappings. This is useful if you need to handle more than one
@@ -49,7 +55,7 @@
 - (instancetype)initWithConnection:(YapDatabaseConnection *)connection updateNotificationName:(NSNotificationName)updateNotificationName NS_DESIGNATED_INITIALIZER;
 
 @property (nonatomic, weak) id<FRZDatabaseViewMapperDelegate> delegate;
-@property (nonatomic, assign) BOOL shouldAnimateUpdates; // If NO, calls reloadData instead of animating updates. Defaults to YES
+@property (nonatomic, assign) FRZDatabaseViewMapperAnimationStyle animationStyle;
 
 /**
  This property determines what view mappings are visible in the view. If changed, the view will

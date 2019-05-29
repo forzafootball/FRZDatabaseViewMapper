@@ -20,9 +20,8 @@
 - (instancetype)initWithDatabase:(YapDatabase *)database
 {
     if (self = [super init]) {
-        self.connection = [database newConnection];
-        [self.connection beginLongLivedReadTransaction];
-        self.shouldAnimateUpdates = YES;
+        _connection = [database newConnection];
+        [_connection beginLongLivedReadTransaction];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(yapDatabaseModified:) name:YapDatabaseModifiedNotification object:database];
     }
     return self;
@@ -35,8 +34,7 @@
             [NSException raise:NSInternalInconsistencyException format:@"%@ requires a connection in a long lived read transaction", NSStringFromClass(self.class)];
         }
 
-        self.connection = connection;
-        self.shouldAnimateUpdates = YES;
+        _connection = connection;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(databaseConnectionDidUpdate:) name:updateNotificationName object:connection];
     }
     return self;
@@ -242,8 +240,8 @@
 
     [self willBeginUpdates];
 
-    if (self.shouldAnimateUpdates == NO || ([self.view isKindOfClass:[UIView class]] && [(UIView *)self.view window] == nil)) {
-        [self fastForwardActiveViewMappingsAndViewAnimated:NO];
+    if (self.animationStyle != FRZDatabaseViewMapperAnimationStyleFull) {
+        [self fastForwardActiveViewMappingsAndViewAnimated:self.animationStyle == FRZDatabaseViewMapperAnimationStyleCrossDissolve];
         [self didEndUpdates];
         return;
     }
@@ -261,6 +259,15 @@
     } completion:^(BOOL finished) {
         [self didEndUpdates];
     }];
+}
+
+- (FRZDatabaseViewMapperAnimationStyle)animationStyle
+{
+    // Optimization: Don't perform animated updates if the view is not in the window hierarchy
+    if ([self.view isKindOfClass:UIView.class] && [(UIView *)self.view window] == nil) {
+        return FRZDatabaseViewMapperAnimationStyleNone;
+    }
+    return _animationStyle;
 }
 
 /**
@@ -299,19 +306,14 @@
  */
 - (void)fastForwardActiveViewMappingsAndViewAnimated:(BOOL)animated
 {
-    if (animated) {
-        [self.view frz_performBatchUpdates:^{
-            [self updateActiveViewMappings];
-            if (self.view.numberOfSections > 0) {
-                [self.view deleteSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, self.view.numberOfSections)]];
-            }
-            NSInteger numberOfSectionsAfter = [self numberOfSections];
-            if (numberOfSectionsAfter > 0) {
-                [self.view insertSections:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, numberOfSectionsAfter)]];
-            }
-        } completion:nil];
+    [self updateActiveViewMappings];
+    if (animated && [self.view isKindOfClass:UIView.class]) {
+        [UIView transitionWithView:(UIView *)self.view
+                          duration:0.22
+                           options:UIViewAnimationOptionTransitionCrossDissolve | UIViewAnimationOptionAllowUserInteraction
+                        animations:^{ [self.view reloadData]; }
+                        completion:nil];
     } else {
-        [self updateActiveViewMappings];
         [self.view reloadData];
     }
 }
