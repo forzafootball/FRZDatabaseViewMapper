@@ -12,6 +12,7 @@
 @interface FRZDatabaseViewMapper()
 
 @property (nonatomic, strong) YapDatabaseConnection *connection;
+@property (nonatomic, strong) NSMutableDictionary<NSIndexPath *, YapCollectionKey *> *cache;
 
 @end
 
@@ -20,6 +21,7 @@
 - (instancetype)initWithDatabase:(YapDatabase *)database
 {
     if (self = [super init]) {
+        _cache = [NSMutableDictionary new];
         _connection = [database newConnection];
         [_connection beginLongLivedReadTransaction];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(yapDatabaseModified:) name:YapDatabaseModifiedNotification object:database];
@@ -34,6 +36,7 @@
             [NSException raise:NSInternalInconsistencyException format:@"%@ requires a connection in a long lived read transaction", NSStringFromClass(self.class)];
         }
 
+        _cache = [NSMutableDictionary new];
         _connection = connection;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(databaseConnectionDidUpdate:) name:updateNotificationName object:connection];
     }
@@ -104,21 +107,22 @@
 
 - (void)getObject:(__autoreleasing id *)object collection:(NSString *__autoreleasing *)collection key:(NSString *__autoreleasing *)key metadata:(__autoreleasing id *)metadata atIndexPath:(NSIndexPath *)indexPath
 {
-    YapDatabaseViewMappings *mappings = nil;
-    NSInteger actualSection = [self getGroup:nil mappings:&mappings forSection:indexPath.section];
     [self.connection readWithBlock:^(YapDatabaseReadTransaction * _Nonnull transaction) {
-        YapDatabaseViewTransaction *viewTransaction = [transaction extension:mappings.view];
-        if (object) {
-            *object = [viewTransaction objectAtRow:indexPath.row inSection:actualSection withMappings:mappings];
+        YapCollectionKey *collectionKey = self.cache[indexPath];
+        if (collectionKey == nil) {
+            YapDatabaseViewMappings *mappings = nil;
+            NSString *collection = nil;
+            NSString *key = nil;
+            NSInteger actualSection = [self getGroup:nil mappings:&mappings forSection:indexPath.section];
+            [[transaction extension:mappings.view] getKey:&key collection:&collection forRow:indexPath.row inSection:actualSection withMappings:mappings];
+            collectionKey = [[YapCollectionKey alloc] initWithCollection:collection key:key];
+            self.cache[indexPath] = collectionKey;
         }
 
-        if (key || collection) {
-            [viewTransaction getKey:key collection:collection forRow:indexPath.row inSection:actualSection withMappings:mappings];
-        }
-
-        if (metadata) {
-            *metadata = [viewTransaction metadataAtRow:indexPath.row inSection:actualSection withMappings:mappings];
-        }
+        if (key) *key = collectionKey.key;
+        if (object) *object = [transaction objectForKey:collectionKey.key inCollection:collectionKey.collection];
+        if (metadata) *metadata = [transaction metadataForKey:collectionKey.key inCollection:collectionKey.collection];
+        if (collection) *collection = collectionKey.collection;
     }];
 }
 
@@ -249,10 +253,18 @@
     /**
      This is a crash fix for a bug in UITableView and UICollectionView. Reloads are not compatible
      with other types of updates inside the same block of batch updates, so we run them independently
-     before.
+     before. We must make sure that objectAtIndexPath: etc returns objects from the cache during reload,
+     since the view mappings will not contain the correct rowid's.
      More info here: https://github.com/yapstudios/YapDatabase/issues/489
      */
-    [self performUpdatesForNotifications:notifications];
+    NSSet<YapCollectionKey *> *collectionKeys = [self updatedCollectionKeysInNotifications:notifications];
+    NSSet<NSIndexPath *> *updatedIndexPaths = [self.cache keysOfEntriesPassingTest:^BOOL(NSIndexPath *indexPath, YapCollectionKey *collectionKey, BOOL *stop) {
+        return [collectionKeys containsObject:collectionKey];
+    }];
+    if (updatedIndexPaths.count > 0) [self.view reloadItemsAtIndexPaths:updatedIndexPaths.allObjects];
+
+    // Clear the cache, since now we will be doing actual changes to the view, and items will receive new index paths
+    [self.cache removeAllObjects];
 
     [self.view frz_performBatchUpdates:^{
         [self performInsertsDeletesAndMovesForNotifications:notifications];
@@ -306,6 +318,7 @@
  */
 - (void)fastForwardActiveViewMappingsAndViewAnimated:(BOOL)animated
 {
+    [self.cache removeAllObjects];
     [self updateActiveViewMappings];
     if (animated && [self.view isKindOfClass:UIView.class]) {
         [UIView transitionWithView:(UIView *)self.view
@@ -377,59 +390,19 @@
     }];
 }
 
-/**
- This function will perform all YapDatabaseViewUpdates without updating the view mappings to the current
- commit.
- */
-- (void)performUpdatesForNotifications:(NSArray<NSNotification *> *)notifications
+- (NSSet<YapCollectionKey *> *)updatedCollectionKeysInNotifications:(NSArray<NSNotification *> *)notifications
 {
-    __block NSArray<NSIndexPath *> *updatedIndexPaths = nil;
-    [self.connection readWithBlock:^(YapDatabaseReadTransaction *transaction) {
-        updatedIndexPaths = [self mappedIndexPathsToReloadForNotifications:notifications transaction:transaction];
-    }];
-    if (updatedIndexPaths.count > 0) [self.view reloadItemsAtIndexPaths:updatedIndexPaths];
-}
-
-/**
- Returns mapped indexPaths for all updated rows in the active viewMappings
- for a set of update notifications.
- */
-- (NSArray<NSIndexPath *> *)mappedIndexPathsToReloadForNotifications:(NSArray<NSNotification *> *)notifications
-                                                         transaction:(YapDatabaseReadTransaction *)transaction
-{
-    NSMutableArray<NSIndexPath *> *mappedIndexPaths = [NSMutableArray new];
-    NSInteger sectionOffset = 0;
-    for (YapDatabaseViewMappings *mappings in self.activeViewMappings) {
-        for (NSIndexPath *indexPath in [self indexPathsToReloadForMappings:mappings notifications:notifications transaction:transaction]) {
-            [mappedIndexPaths addObject:[NSIndexPath indexPathForItem:indexPath.item inSection:indexPath.section + sectionOffset]];
-        }
-        sectionOffset += mappings.numberOfSections;
-    }
-    return mappedIndexPaths;
-}
-
-/**
- Returns unmapped indexPaths for all the updated rows for a given set of viewMappings
- and update notifications.
- */
-- (NSArray<NSIndexPath *> *)indexPathsToReloadForMappings:(YapDatabaseViewMappings *)mappings
-                                            notifications:(NSArray<NSNotification *> *)notifications
-                                              transaction:(YapDatabaseReadTransaction *)transaction
-{
-    NSMutableArray<NSIndexPath *> *indexPaths = [NSMutableArray new];
-    YapDatabaseViewTransaction *viewTransaction = (YapDatabaseViewTransaction *)[transaction extension:mappings.view];
+    NSMutableSet<YapCollectionKey *> *collectionKeys = [NSMutableSet new];
     for (NSNotification *notification in notifications) {
-        NSArray *changes = notification.userInfo[YapDatabaseExtensionsKey][mappings.view][YapDatabaseViewChangesKey];
-        NSIndexSet *updateIndexes = [changes indexesOfObjectsPassingTest:^BOOL(id change, NSUInteger idx, BOOL *stop) {
-            return [change isKindOfClass:YapDatabaseViewRowChange.class] && [(YapDatabaseViewRowChange *)change type] == YapDatabaseViewChangeUpdate;
-        }];
-
-        [changes enumerateObjectsAtIndexes:updateIndexes options:0 usingBlock:^(YapDatabaseViewRowChange *update, NSUInteger idx, BOOL *stop) {
-            NSIndexPath *indexPath = [viewTransaction indexPathForKey:update.collectionKey.key inCollection:update.collectionKey.collection withMappings:mappings];
-            if (indexPath) [indexPaths addObject:indexPath];
-        }];
+        for (NSDictionary *extension in [notification.userInfo[YapDatabaseExtensionsKey] allValues]) {
+            for (id change in extension[YapDatabaseViewChangesKey]) {
+                if ([change isKindOfClass:YapDatabaseViewRowChange.class] && [(YapDatabaseViewRowChange *)change type] == YapDatabaseViewChangeUpdate) {
+                    [collectionKeys addObject:[(YapDatabaseViewRowChange *)change collectionKey]];
+                }
+            }
+        }
     }
-    return indexPaths;
+    return collectionKeys;
 }
 
 @end
