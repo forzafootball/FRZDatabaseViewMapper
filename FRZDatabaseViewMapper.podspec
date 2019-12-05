@@ -1,7 +1,7 @@
 # coding: utf-8
 Pod::Spec.new do |spec|
   spec.name         = 'FRZDatabaseViewMapper'
-  spec.version      = '1.2.1'
+  spec.version      = '1.2.2'
   spec.platform     = :ios, '9.0'
   spec.homepage     = 'https://github.com/ForzaFootball/FRZDatabaseViewMapper'
   spec.authors      = { 'Joel Ekström' => 'joel@forzafootball.com' }
@@ -10,5 +10,5 @@ Pod::Spec.new do |spec|
   spec.source       = { :git => 'https://github.com/forzafootball/FRZDatabaseViewMapper.git', :tag => "v#{spec.version}" }
   spec.source_files = '*.{h,m}'
   spec.frameworks   = 'Foundation', 'UIKit'
-  spec.dependency     'YapDatabase', '~> 3.0'
+  spec.dependency     'YapDatabase', '> 3.0'
 end
