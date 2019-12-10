@@ -7,11 +7,10 @@
 //
 
 #import <Foundation/Foundation.h>
-#import <YapDatabase/YapDatabase.h>
-#import <YapDatabase/YapDatabaseViewMappings.h>
 #import "FRZDatabaseMappable.h"
 
 @class FRZDatabaseViewMapper;
+
 @protocol FRZDatabaseViewMapperDelegate <NSObject>
 
 @optional
@@ -25,6 +24,8 @@ typedef NS_ENUM(NSUInteger, FRZDatabaseViewMapperAnimationStyle) {
     FRZDatabaseViewMapperAnimationStyleCrossDissolve,   // Simply reloadData followed by a quick cross dissolve (faster than full animations)
     FRZDatabaseViewMapperAnimationStyleNone             // Only reload data, with no animations at all
 };
+
+@class YapDatabase, YapDatabaseConnection, YapDatabaseViewMappings;
 
 /**
  This class manages keeping a UITableView (or collectionView) updated with animations,

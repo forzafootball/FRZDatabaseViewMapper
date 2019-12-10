@@ -7,7 +7,9 @@
 //
 
 #import "FRZDatabaseViewMapper.h"
+#import <YapDatabase/YapDatabase.h>
 #import <YapDatabase/YapDatabaseView.h>
+#import <YapDatabase/YapDatabaseViewMappings.h>
 
 @interface FRZDatabaseViewMapper()
 
